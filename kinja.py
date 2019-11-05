@@ -268,13 +268,13 @@ def main(url, nextOne, grab_images):
                     continue
 
                 try:
-                    with open('{}/{}.txt'.format(fullTitle, 'contents'), 'w') as f:
+                    with open('{}/{}.txt'.format(fullTitle, 'contents', encoding='utf-8'), 'w') as f:
                         f.write("HEADLINE: " + realTitle + "\n")
                         f.write("Published: " + isotime + "\n")
                         f.write("Original URL : " + a + "\n\n")
                         f.write(text + "\n")
 
-                    with open('{}/{}.html'.format(fullTitle, 'contents'), 'w') as f:
+                    with open('{}/{}.html'.format(fullTitle, 'contents', encoding='utf-8'), 'w') as f:
                         f.write('<html><head><title>{}</title></head><body><h1>{}</h1>'.format(realTitle, realTitle))
                         f.write('<p>Published: {} at <a href="{}">{}</a></p>\n'.format(isotime, a, a))
                         f.write(html)
