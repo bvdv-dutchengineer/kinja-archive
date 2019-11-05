@@ -207,22 +207,29 @@ def one_off(url):
     content = soup.find('div', {'class': 'js_expandable-container'})
     return doc_author_content(content, 'irrelevant', False)
 
-def main(url, nextOne, grab_images):
+def main(url, nextOne, grab_images,a_list):
     keepGoing = True
     while keepGoing:
-        print(nextOne)
-        keepGoing = False
-        page = urllib.request.urlopen(url + nextOne).read()
-        soup = BeautifulSoup(page, "html.parser")
-        pageLinks = []
-        for div in soup.findAll("div", {"class": "js_save-badge"}):
-            l = div.attrs['data-post-permalink']
-            if l not in pageLinks:
-                pageLinks.append(l)
-        for link in soup.findAll("a"):
-            if link.get("href") and link.get("href").startswith("?startIndex=") == True and link.get("href") != nextOne:
-                nextOne = link.get("href")
-                keepGoing = True
+        if not a_list:
+            print(nextOne)
+            keepGoing = False
+            page = urllib.request.urlopen(url + nextOne).read()
+            soup = BeautifulSoup(page, "html.parser")
+            pageLinks = []
+            for div in soup.findAll("div", {"class": "js_save-badge"}):
+                l = div.attrs['data-post-permalink']
+                if l not in pageLinks:
+                    pageLinks.append(l)
+            for link in soup.findAll("a"):
+                if link.get("href") and link.get("href").startswith("?startIndex=") == True and link.get("href") != nextOne:
+                    nextOne = link.get("href")
+                    keepGoing = True
+        else:
+            pageLinks = []
+            f = open(a_list,"r")
+            f1 = f.readlines()
+            for x in f1:
+                pageLinks.append(x)
         for a in pageLinks:
             try:
                 articlePage = urllib.request.urlopen(a).read()
@@ -282,6 +289,10 @@ def main(url, nextOne, grab_images):
                 except:
                     print('Sorry, problems writing the files, probably character set. Working on this.')
                     continue
+        if not a_list:
+            pageLinks = []
+        else:
+            break
 
 if __name__ == '__main__':
     import argparse
@@ -294,6 +305,12 @@ if __name__ == '__main__':
                         default="")
     parser.add_argument('--images', action='store_true',
                         help='Beta: grab your images alongside your document')
+    parser.add_argument('--article_list', default='none',
+                        help='Alpha: List of articles to download')
 
     args = parser.parse_args()
-    main('https://kinja.com/{}'.format(args.username), args.next, args.images)
+
+    if args.article_list == 'none':
+        args.article_list = [] #adding option to run without article name
+
+    main('https://kinja.com/{}'.format(args.username), args.next, args.images,args.article_list)
