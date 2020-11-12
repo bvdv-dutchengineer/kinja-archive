@@ -200,18 +200,40 @@ def year_month(timestr):
         return (m.group(1), m.group(2))
     return 'unknown-unknown'
 
-## For testing
-def one_off(url):
-    page = urllib.request.urlopen(url).read()
-    soup = BeautifulSoup(page, "html.parser")
-    content = soup.find('div', {'class': 'js_expandable-container'})
-    return doc_author_content(content, 'irrelevant', False)
+## This works for the two types of documents I'm aware of (posts with
+## lots of content, vs single-item video/gif content) but I can't
+## guarantee the logic will always work.
+##
+## Specifically, sometimes 'js_post-content' is the parent of
+## 'js_expandable-container', where the content lives, but sometimes
+## they're in parallel and 'js_expandable-content' is empty.
+def pick_content_block(soup, classes):
+    for c in classes:
+        possible = soup.find('div', {'class': c})
 
-def main(url, nextOne, grab_images,a_list):
+        if possible and len(list(possible.children)) > 0:
+            return possible
+
+    print('No content found for post, skipping')
+    return None
+
+def find_post_id(soup):
+    return soup.find('div', {'class': 'js_save-badge'}).attrs['data-post-id']
+
+def post_json(post_id):
+    if post_id:
+        return f'https://kinja.com/api/core/post/{post_id}'
+    raise ValueError('no post id')
+
+def main(url, nextOne, grab_images, only_print_urls, a_list):
     keepGoing = True
+    successful = 0
+    errored = []
+
     while keepGoing:
         if not a_list:
-            print(nextOne)
+            if not only_print_urls:
+                print(nextOne)
             keepGoing = False
             page = urllib.request.urlopen(url + nextOne).read()
             soup = BeautifulSoup(page, "html.parser")
@@ -230,7 +252,12 @@ def main(url, nextOne, grab_images,a_list):
             f1 = f.readlines()
             for x in f1:
                 pageLinks.append(x)
+
         for a in pageLinks:
+            if only_print_urls:
+                print(a)
+                continue
+
             try:
                 articlePage = urllib.request.urlopen(a).read()
                 print('Fetched: {}'.format(a))
@@ -238,8 +265,11 @@ def main(url, nextOne, grab_images,a_list):
             except urllib.error.HTTPError as e:
                 print("Error fetching article: " + a)
                 print(e)
+                errored.append(a)
             else:
                 pageSoup = BeautifulSoup(articlePage, "html.parser")
+                postId = find_post_id(pageSoup)
+                postJson = urllib.request.urlopen(post_json(postId)).read()
                 isotime = pageSoup.find('time').attrs['datetime']
                 (year, month) = year_month(isotime)
                 filepath = year + "/" + month + "/"
@@ -256,43 +286,75 @@ def main(url, nextOne, grab_images,a_list):
                 postTitle = "".join([c for c in preTitle if re.match(r"\w", c)])
                 fullTitle = filepath + postTitle
 
-                notitle = 1
-                while os.path.exists(fullTitle):
-                    fullTitle = fullTitle + str(notitle)
-                    notitle += 1
+                titleversion = 1
+                testTitle = fullTitle
+                while os.path.exists(testTitle):
+                    testTitle = fullTitle + str(titleversion)
+                    titleversion += 1
 
+                fullTitle = testTitle
                 try:
                     os.makedirs(fullTitle)
+
                 except OSError as exc:
                     if exc.errno != errno.EEXIST:
+                        errored.append(a)
                         raise
 
                 try:
-                    content = pageSoup.find('div', {'class': 'js_expandable-container'})
+                    with open('{}/{}.json'.format(fullTitle, 'kinja_api'), 'w') as f:
+                        import json, pprint
+
+                        f.write(pprint.PrettyPrinter().pformat(json.loads(postJson)))
+
+                    content = pick_content_block(pageSoup,
+                                                 ['js_expandable-container',
+                                                  'js_post-content'])
+                    if not content:
+                        errored.append(a)
+                        continue
                     (html, text) = doc_author_content(content, fullTitle, grab_images)
                 except:
-                    print('Sorry, problems parsing {}, skipping'.format(a))
+                    print('Sorry, problems parsing, skipping'.format(a))
+                    errored.append(a)
                     continue
 
                 try:
-                    with open('{}/{}.txt'.format(fullTitle, 'contents'), 'w', encoding='utf-8') as f:
+                    with open('{}/{}.txt'.format(fullTitle, 'contents'), 'w') as f:
                         f.write("HEADLINE: " + realTitle + "\n")
                         f.write("Published: " + isotime + "\n")
                         f.write("Original URL : " + a + "\n\n")
                         f.write(text + "\n")
 
-                    with open('{}/{}.html'.format(fullTitle, 'contents'), 'w',encoding='utf-8') as f:
-                        f.write('<html><head><title>{}</title></head><body><h1>{}</h1>'.format(realTitle, realTitle))
+                    with open('{}/{}.html'.format(fullTitle, 'contents'), 'w') as f:
+                        f.write('<html><head><title>{}</title><meta charset="UTF-8"></head><body><h1>{}</h1>'.format(realTitle, realTitle))
                         f.write('<p>Published: {} at <a href="{}">{}</a></p>\n'.format(isotime, a, a))
                         f.write(html)
                         f.write('</body></html>\n')
+                    successful += 1
                 except:
-                    print('Sorry, problems writing the files, probably character set. Working on this.')
+                    print('Sorry, problems writing the files, perhaps Unicode issues?')
+                    errored.append(a)
                     continue
         if not a_list:
             pageLinks = []
         else:
             break
+    if not only_print_urls:
+        print('''Summary:
+  {}  downloaded successfully
+  {}  had problems
+'''.format(successful, len(errored)))
+
+        if len(errored) > 0:
+            print('''
+URLs with errors:
+---
+''')
+            for e in errored:
+                print(e)
+
+
 
 if __name__ == '__main__':
     import argparse
@@ -304,13 +366,18 @@ if __name__ == '__main__':
                         help='Pick up where a previous ran left off by passing the "?startIndex=" value last seen',
                         default="")
     parser.add_argument('--images', action='store_true',
-                        help='Beta: grab your images alongside your document')
+                        help='Grab your images alongside your document')
+    parser.add_argument('--urls-only', action='store_true',
+                        help='Just discover and print your post URLs')
     parser.add_argument('--article_list', default='none',
                         help='Alpha: List of articles to download')
 
     args = parser.parse_args()
+# main('https://kinja.com/{}'.format(args.username), args.next, args.images, args.urls_only)
 
+    if args.urls_only == 'none':
+        args.urls_only = []  # adding option to run without urls request
     if args.article_list == 'none':
-        args.article_list = [] #adding option to run without article name
+        args.article_list = []  # adding option to run without article name
 
-    main('https://kinja.com/{}'.format(args.username), args.next, args.images,args.article_list)
+    main('https://kinja.com/{}'.format(args.username), args.next, args.images, args.urls_only, args.article_list)
